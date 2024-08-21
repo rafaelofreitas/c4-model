@@ -1,0 +1,97 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+!define DEVICONS https://raw.githubusercontent.com/tupadr3/plantuml-icon-font-sprites/master/devicons
+!define FONTAWESOME https://raw.githubusercontent.com/tupadr3/plantuml-icon-font-sprites/master/font-awesome-5
+!define DEVICONS2 https://raw.githubusercontent.com/tupadr3/plantuml-icon-font-sprites/main/icons/devicons2
+!define AWSPuml https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v18.0/dist
+
+!include FONTAWESOME/microsoft.puml
+!include DEVICONS/react.puml
+!include DEVICONS/mysql.puml
+!include DEVICONS2/spring_original.puml
+!include DEVICONS2/apachekafka_original.puml
+!include AWSPuml/AWSCommon.puml
+!include AWSPuml/Storage/SimpleStorageService.puml
+!include AWSPuml/NetworkingContentDelivery/ElasticLoadBalancing.puml
+!include AWSPuml/ApplicationIntegration/APIGateway.puml
+
+AddRelTag("async", $lineStyle= DashedLine())
+
+title "Digital Wallet Architecture"
+
+Person(client, "Client", "Digital Wallet User")
+
+System_Ext(email_system, "E-Mail System", "The internal Microsoft Exchange system", "envelope", $sprite="microsoft")
+Rel_Back(client, email_system, "Sends e-mails to")
+
+System_Ext(s3_service, "Amazon S3", "Object storage service for storing and retrieving files", $sprite="SimpleStorageService")
+
+System_Ext(payment_gateway, "Payment Gateway", "Payment Processor")
+
+System_Boundary(digital_wallet_network, "Network Layer") {
+    Container(firewall, "Firewall", "Network Firewall", "Protects the network by controlling incoming and outgoing traffic")
+    Container(proxy, "Proxy", "Reverse Proxy", "Distributes requests and provides caching")
+    Container(load_balancer, "Load Balancer", "AWS Elastic Load Balancer", "Distributes incoming application traffic across multiple targets", $sprite="ElasticLoadBalancing")
+    
+    Rel_R(client, firewall, "Uses", "HTTPS")
+    Rel_R(firewall, proxy, "Routes", "HTTPS")
+    Rel_R(proxy, load_balancer, "Routes", "HTTPS")
+}
+
+System_Boundary(digital_wallet_front, "Digital Wallet Front") {  
+    Container(spa, "SPA", "JavaScript, React 18", "Digital Wallet Web Application", $sprite="react")
+    Container(api_gateway_front, "API Gateway", "AWS API Gateway", "Handles and routes incoming API requests from clients to the appropriate microservices", $sprite="APIGateway")
+
+    Rel(load_balancer, api_gateway_front, "Routes", "HTTPS")
+    Rel_R(api_gateway_front, spa, "Uses", "JSON/HTTPS")
+}
+
+System_Boundary(digital_wallet_back, "Digital Wallet Back") {
+    Container(api_gateway_back, "API Gateway", "AWS API Gateway", "Routes API requests from the front-end to back-end services", $sprite="APIGateway")
+    Rel(api_gateway_front, api_gateway_back, "Uses", "JSON/HTTPS")
+
+    Container(wallet_core, "Wallet Core", "Java 17, Spring Boot 3.3.3", "Handles core transaction logic and business rules", $sprite="spring_original")
+    Rel(api_gateway_back, wallet_core, "Routes", "JSON/HTTPS")
+
+    ContainerDb(wallet_core_db, "Wallet DB", "MySQL 8.0", $sprite="mysql")
+    Rel(wallet_core, wallet_core_db, "Uses", "SQL/JDBC, port 3306")
+
+    Rel_L(wallet_core, s3_service, "Uses", "HTTP/HTTPS")
+    Rel_Back(email_system, wallet_core, "Sends e-mails using", "sync, SMTP")
+
+    Container(balance_service, "Balance Microservice", "Java 17, Spring Boot 3.3.3", "Provides endpoints for retrieving balance information", $sprite="spring_original") {
+        note right of balance_service
+            Provides balance information to the front-end and other services.
+        end note
+    }
+    Rel(api_gateway_back, balance_service, "Routes", "JSON/HTTPS")
+
+    ContainerQueue(balance_queue, "Balance Topic", "Apache Kafka 3.8", "Topic for balance updates", $sprite="apachekafka_original")
+    Rel(wallet_core, balance_queue, "Publishes", "Avro/Kafka, port 9092", $tags = "async")
+    Rel_Back(balance_queue, balance_service, "Subscribes", "Avro/Kafka, port 9092", $tags = "async")
+    
+    ContainerDb(balance_db, "Balance DB", "MySQL 8.0", $sprite="mysql")
+    Rel(balance_service, balance_db, "Uses", "SQL/JDBC, port 3306")
+
+    Container(statement_service, "Statement Microservice", "Java 17, Spring Boot 3.3.3", "Provides endpoints for retrieving customer statements", $sprite="spring_original")
+    Rel(api_gateway_back, statement_service, "Routes", "JSON/HTTPS")
+    
+    ContainerQueue(statement_queue, "Statement Topic", "Apache Kafka 3.8", "Topic for statement updates", $sprite="apachekafka_original")
+    Rel(wallet_core, statement_queue, "Publishes", "Avro/Kafka, port 9092", $tags = "async")
+    Rel_Back(statement_queue, statement_service, "Subscribes", "Avro/Kafka, port 9092", $tags = "async")
+
+    ContainerDb(statement_db, "Statement DB", "MySQL 8.0", $sprite="mysql")
+    Rel(statement_service, statement_db, "Uses", "SQL/JDBC, port 3306")
+
+    Container(payment_acl, "Payment ACL", "Java 17, Spring Boot 3.3.3", "Acts as a layer to communicate with the Payment Gateway", $sprite="spring_original")
+    Rel(payment_acl, payment_gateway, "Uses", "JSON/HTTPS")    
+    Rel(wallet_core, payment_acl, "Routes", "JSON/HTTPS")
+
+    ContainerDb(payment_acl_db, "Payment ACL DB", "MySQL 8.0", $sprite="mysql")
+    Rel(payment_acl, payment_acl_db, "Uses", "SQL/JDBC, port 3306")   
+}
+
+SHOW_LEGEND()
+
+@enduml
